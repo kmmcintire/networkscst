@@ -1,0 +1,9 @@
+"","Parasite.Species","Weight.Method","KW.p","KW.chisq","Comparison","Conover.p"
+"1","brood","infecteds",0.0102237982144516,15.0326354245402,"dentifera - parvula",0.0168718449578396
+"2","brood","infecteds",0.0102237982144516,15.0326354245402,"dentifera - pulicaria",0.0445328701669007
+"3","pasteuria","prevalence",0.00848716611875935,13.6534942182001,"ceriodaphnia - dentifera",0.013852153439338
+"4","pasteuria","prevalence",0.00848716611875935,13.6534942182001,"dentifera - dubia",0.0203019288697202
+"5","pasteuria","prevalence",0.00848716611875935,13.6534942182001,"ceriodaphnia - retrocurva",0.0105961849063275
+"6","pasteuria","prevalence",0.00848716611875935,13.6534942182001,"dubia - retrocurva",0.0161433736264511
+"7","pasteuria","infecteds",0.0105287387482874,13.158064516129,"ceriodaphnia - dentifera",0.00673635587835366
+"8","pasteuria","infecteds",0.0105287387482874,13.158064516129,"ceriodaphnia - retrocurva",0.00884864251526609

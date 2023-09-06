@@ -1,0 +1,1999 @@
+---
+title: "Networks Analysis"
+author: "Meghan Duffy"
+date: "2023-06-14"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Networks analysis
+
+This project was begun by Camden Gowler as part of his dissertation research and then taken over by Kris McIntire. This rmd file pulls together the various analyses. The project uses the Duffy Lab field survey data from 2014-2016.
+
+# Main questions
+How do host species and parasite species vary within interaction networks? 
+
+Magnitude and breadth of infections for particular host and parasite combinations.
+
+Centrality of Host-x-Host networks tell us about superspreaders and spillover.
+Centrality of Parasite-x-Parasite networks tell us about generalist/specialist parasites(?)
+
+What host would be a likely cause of spillover? What parasite species would it likely be?
+
+# Specific questions
+* Can we identify host species that (1) spread/share the most parasites to other host species and (2) spread/share the widest breadth of parasite species to other host species? Both of these are important for understanding pathogen spillover.
+
+* Can we identify parasite species that are more generalist/specialist? look at density of host-host adjaceny networks
+
+* How do host-x-host networks and centrality of host nodes vary with different parasite species? Look at shared AUC data
+
+* How does host centrality relate to host density? 
+    + Which hosts are more/less central for a given density, and could these hosts be amplifiers/diluters of parasites       in other host species?  
+
+# Noteworthy things about this dataset/analysis
+* We have high quality data of multi-host, multi-parasite communities.
+* We can specifically weigh the networks to look at spillover (e.g. epidemics, shared auc metric)
+
+### Setting things up
+```{r, load libraries import data set things up}
+library(here)
+library(tidyverse)
+library(bipartite)
+
+
+
+require(gplots)
+require(ggthemes)
+require(ggridges)
+require(zoo)
+require(igraph)
+
+
+here::i_am("scripts/networks.Rmd")
+
+clean_data <- readr::read_csv(here("data/Clean-Data-2014-2016.csv")) 
+attach(clean_data)
+
+all_sum_inf <- readr::read_csv(here("data/all_sum_inf.csv")) 
+year_sum_inf <- readr::read_csv(here("data/year_sum_inf.csv")) 
+lakeyear_sum_inf <- readr::read_csv(here("data/lakeyear_sum_inf.csv"))  
+
+all_auc_prev <- readr::read_csv(here("data/all_auc_prev.csv"))  
+year_auc_prev <- readr::read_csv(here("data/year_auc_prev.csv")) 
+lakeyear_auc_prev <- readr::read_csv(here("data/lakeyear_auc_prev.csv")) 
+
+all_max_prev <- readr::read_csv(here("data/all_max_prev.csv")) 
+year_max_prev <- readr::read_csv(here("data/year_max_prev.csv")) 
+lakeyear_max_prev <- readr::read_csv(here("data/lakeyear_max_prev.csv")) 
+
+all_auc_shared_prev <- readr::read_csv(here("data/all_auc_shared_prev.csv")) 
+year_auc_shared_prev <- readr::read_csv(here("data/year_auc_shared_prev.csv"))  
+lakeyear_auc_shared_prev <- readr::read_csv(here("data/lakeyear_auc_shared_prev.csv")) 
+
+all_auc_shared_prevdens <- readr::read_csv(here("data/all_auc_shared_prevdens.csv"))  
+year_auc_shared_prevdens <- readr::read_csv(here("data/year_auc_shared_prevdens.csv"))  
+lakeyear_auc_shared_prevdens <- readr::read_csv(here("data/lakeyear_auc_shared_prevdens.csv"))  
+
+all_auc_density <- readr::read_csv(here("data/all_auc_density.csv")) 
+year_auc_density <- readr::read_csv(here("data/year_auc_density.csv"))
+lakeyear_auc_density <- readr::read_csv(here("data/lakeyear_auc_density.csv")) 
+
+all_auc_shared_total_density <- readr::read_csv(here("data/all_auc_shared_total_density.csv")) 
+year_auc_shared_total_density <- readr::read_csv(here("data/year_auc_shared_total_density.csv")) 
+lakeyear_auc_shared_total_density <- readr::read_csv(here("data/lakeyear_auc_shared_total_density.csv"))  
+
+
+# Multiple plot function
+#
+# ggplot objects can be passed in ..., or to plotlist (as a list of ggplot objects)
+# - cols:   Number of columns in layout
+# - layout: A matrix specifying the layout. If present, 'cols' is ignored.
+#
+# If the layout is something like matrix(c(1,2,3,3), nrow=2, byrow=TRUE),
+# then plot 1 will go in the upper left, 2 will go in the upper right, and
+# 3 will go all the way across the bottom.
+#
+multiplot <- function(..., plotlist=NULL, file, cols=1, layout=NULL) {
+  library(grid)
+  
+  # Make a list from the ... arguments and plotlist
+  plots <- c(list(...), plotlist)
+  
+  numPlots = length(plots)
+  
+  # If layout is NULL, then use 'cols' to determine layout
+  if (is.null(layout)) {
+    # Make the panel
+    # ncol: Number of columns of plots
+    # nrow: Number of rows needed, calculated from # of cols
+    layout <- matrix(seq(1, cols * ceiling(numPlots/cols)),
+                     ncol = cols, nrow = ceiling(numPlots/cols))
+  }
+  
+  if (numPlots==1) {
+    print(plots[[1]])
+    
+  } else {
+    # Set up the page
+    grid.newpage()
+    pushViewport(viewport(layout = grid.layout(nrow(layout), ncol(layout))))
+    
+    # Make each plot, in the correct location
+    for (i in 1:numPlots) {
+      # Get the i,j matrix positions of the regions that contain this subplot
+      matchidx <- as.data.frame(which(layout == i, arr.ind = TRUE))
+      
+      print(plots[[i]], vp = viewport(layout.pos.row = matchidx$row,
+                                      layout.pos.col = matchidx$col))
+    }
+  }
+}
+```
+
+# Total infections, summed across all lakes, years
+Notes:
+Pasteuria seems more aggregated than other major parasites (a lot of infections in retrocurva and dentifera).
+
+Brood & Scarlet infect the most host species and have a comparatively even spread across hosts. Also interesting that Brood is more common in cerio, while scarlet is more common in pulicaria.
+
+```{r, fig.height=7,fig.width=7,echo=FALSE, warning=FALSE}
+# Total number infections for all years combined (host*parasite)
+all_inf <- all_sum_inf %>%
+  mutate(Lake = "All") %>%
+  select(Host.Species, Parasite.Species, Lake, Sum_Infections)
+
+dat_matrix <- frame2webs(all_inf, 
+                             varnames = c("Host.Species", "Parasite.Species", "Lake", "Sum_Infections"), 
+                             type.out = "list", 
+                             emptylist = FALSE)
+
+mat <- as.matrix(dat_matrix$All)
+
+mat.text <- round(mat, digits = 1)
+    
+my_palette <- colorRampPalette(c("white", "#ffffd9", "#edf8b1", "#c7e9b4", "#7fcdbb", "#41b6c4",
+"#1d91c0"))
+
+quantile_breaks <- function(xs, n = 7) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n))
+  breaks[!duplicated(breaks)]
+}
+
+mat_breaks <- quantile_breaks(mat, n = 8)
+
+heatmap.2(mat,
+              cellnote = mat.text,
+              notecol = "black",
+              trace = "none",
+              density.info = "none",
+              margins =c(12,9), 
+              #main = "Total infections all years", 
+              dendrogram = "both",
+              key = FALSE,
+              col = my_palette,
+              breaks = mat_breaks)
+```
+
+\pagebreak
+
+# Total AUC prevalence, summed across all lakes, years
+Took the integrated area of prevalence of each parasite in each host in each lake in each year, then summed across all lakes, years. 
+
+
+```{r, fig.height=7,fig.width=7,echo=FALSE, warning=FALSE}
+# Total AUC for all years combined (host*parasite)
+all_auc <- all_auc_prev %>%
+  mutate(Lake = "All") %>%
+  select(Host.Species, Parasite.Species, Sum_AUC)
+
+str(all_auc)
+
+dat_matrix <- frame2webs(all_auc, 
+                             varnames = c("Host.Species", "Parasite.Species", "Sum_AUC"), 
+                             type.out = "list", 
+                             emptylist = FALSE)
+
+mat <- as.matrix(dat_matrix$All)
+
+mat.text <- round(mat, digits = 2)
+    
+my_palette <- colorRampPalette(c("white", "#ffffd9", "#edf8b1", "#c7e9b4", "#7fcdbb", "#41b6c4",
+"#1d91c0"))
+
+quantile_breaks <- function(xs, n = 7) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n))
+  breaks[!duplicated(breaks)]
+}
+
+mat_breaks <- quantile_breaks(mat, n = 8)
+
+heatmap.2(mat,
+              cellnote = mat.text,
+              notecol = "black",
+              trace = "none",
+              density.info = "none",
+              margins =c(12,9), 
+              #main = "Total AUC all years", 
+              dendrogram = "both",
+              key = FALSE,
+              col = my_palette,
+              breaks = mat_breaks)
+```
+
+\pagebreak
+
+# Shared AUC Prevalence, separate plots for each parasite species
+Host-Host networks created from shared AUC of prevalence for each parasite species. Diagonals show total AUC of prevalence for each host species (e.g. dubia-dubia cell in the first plot shows total AUC of brood prevalence in dubia).
+
+```{r, fig.height=4,fig.width=4,echo=FALSE, warning=FALSE}
+# Total shared AUC prevalence for all years combined (host*host)
+
+# use make mat function to host*host matrix for shared auc data
+auc_shared <- lakeyear_auc_shared_prev
+parasite.vec <- c(levels(auc_shared$Parasite.Species))
+
+# function 
+make_mat <- function(auc_shared, parasite.vec) {
+  
+  mat_list <- list()
+  
+  # filter and summarize auc data by parasite species
+  for (i in 1:length(parasite.vec)) {
+    dat <- auc_shared %>%
+      filter(Parasite.Species == parasite.vec[i]) %>%
+      select(Parasite.Species, Focal.Host, Other.Host, AUC.prev) %>%
+      group_by(Focal.Host, Other.Host) %>%
+      summarise(AUC.total = sum(AUC.prev)) %>%
+      mutate(Lake = "All") %>%
+      select(Focal.Host, Other.Host, Lake, AUC.total)
+    
+    dat <- as.data.frame(dat) # make into dataframe
+    
+    # turn data frame into matrix (using bipartite package function)
+    dat_matrix <- frame2webs(dat, 
+                             varnames = c("Focal.Host", "Other.Host", "Lake", "AUC.total"), 
+                             type.out = "list", 
+                             emptylist = FALSE)
+    
+    mat1 <- as.matrix(dat_matrix$All) # convert to matrix
+    
+    mat2 <- mat1[which(rowSums(mat1) > 0), ] # drop rows full of zeros
+    mat3 <- mat2[, which(colSums(mat2) > 0)] # drop columns full of zeros
+    
+    mat_list[[i]] <- mat3 # add matrix to list
+  }
+  return(mat_list) 
+}
+
+auc_shared_mat <- make_mat(auc_shared, parasite.vec) 
+names(auc_shared_mat) <- parasite.vec
+
+plot_heatmap <- function(auc_shared_mat, parasite.vec) {
+  
+  for (i in 1:length(parasite.vec)) {
+    mat <- as.matrix(auc_shared_mat[[i]])
+    
+    #max.cell <- max(mat)
+    
+    mat.text <- round(mat, digits = 1)
+    my_palette <- colorRampPalette(c("white", "#ffffd9", "#edf8b1", "#c7e9b4", "#7fcdbb", "#41b6c4",
+    "#1d91c0"))
+
+    mat_breaks <- quantile_breaks(mat, n = 8)
+
+    par(cex.main = 0.6)
+        
+    heatmap.2(mat,
+              cellnote = mat.text,
+              cexRow = 0.8,
+              cexCol = 0.8,
+              notecex = 0.75,
+              notecol = "black",
+              trace = "none",
+              density.info = "none",
+              margins =c(8,8), 
+              main = paste(parasite.vec[i]), 
+              dendrogram = "column",
+              key = FALSE,
+              col = my_palette,
+              breaks=mat_breaks)
+    
+  }
+}
+
+plot_heatmap(auc_shared_mat, parasite.vec)
+
+# for some reason, need to use dev.off whenever this function throws an error in "par(op)"
+#dev.off()
+```
+
+\pagebreak
+
+# AUC of prevalence-x-density (log scale)
+Dentifera and retrocurva are really similar.
+
+In terms of the abundant host species, pulicaria doesn't get infected by as much.
+
+
+```{r, fig.height=4,fig.width=4,echo=FALSE, warning=FALSE}
+# Total shared AUC prev*density for all years combined (host*host)
+
+# use make mat function to host*host matrix for shared auc data
+auc_shared <- lakeyear_auc_shared_prevdens
+parasite.vec <- c(levels(auc_shared$Parasite.Species))
+
+# function 
+make_mat <- function(auc_shared, parasite.vec) {
+  
+  mat_list <- list()
+  
+  # filter and summarize auc data by parasite species
+  for (i in 1:length(parasite.vec)) {
+    dat <- auc_shared %>%
+      filter(Parasite.Species == parasite.vec[i]) %>%
+      select(Parasite.Species, Focal.Host, Other.Host, AUC.prev) %>%
+      group_by(Focal.Host, Other.Host) %>%
+      summarise(AUC.total = sum(AUC.prev)) %>%
+      mutate(Lake = "All",
+             logAUC = log(AUC.total + 1)) %>%
+      select(Focal.Host, Other.Host, Lake, logAUC)
+    
+    dat <- as.data.frame(dat) # make into dataframe
+        
+    # turn data frame into matrix (using bipartite package function)
+    dat_matrix <- frame2webs(dat, 
+                             varnames = c("Focal.Host", "Other.Host", "Lake", "logAUC"), 
+                             type.out = "list", 
+                             emptylist = FALSE)
+   
+    mat1 <- as.matrix(dat_matrix$All) # convert to matrix
+    
+    mat2 <- mat1[which(rowSums(mat1) > 0), ] # drop rows full of zeros
+    mat3 <- mat2[, which(colSums(mat2) > 0)] # drop columns full of zeros
+    
+    mat_list[[i]] <- mat3 # add matrix to list
+  }
+  return(mat_list) 
+}
+
+auc_shared_mat <- make_mat(auc_shared, parasite.vec) 
+names(auc_shared_mat) <- parasite.vec
+
+plot_heatmap <- function(auc_shared_mat, parasite.vec) {
+  
+  for (i in 1:length(parasite.vec)) {
+    mat <- as.matrix(auc_shared_mat[[i]])
+    
+    #max.cell <- max(mat)
+    
+    mat.text <- round(mat, digits = 1)
+    
+    my_palette <- colorRampPalette(c("white", "#ffffd9", "#edf8b1", "#c7e9b4", "#7fcdbb", "#41b6c4",
+    "#1d91c0"))
+
+    mat_breaks <- quantile_breaks(mat, n = 8)
+
+    par(cex.main = 0.7)
+    
+    heatmap.2(mat,
+              cellnote = mat.text,
+              cexRow = 0.8,
+              cexCol = 0.8,
+              notecex = 0.75,
+              notecol = "black",
+              trace = "none",
+              density.info = "none",
+              margins =c(8,8), 
+              main = paste(parasite.vec[i]), 
+              dendrogram = "column",
+              key = FALSE,
+              col = my_palette,
+              breaks = mat_breaks)
+  }
+}
+
+plot_heatmap(auc_shared_mat, parasite.vec)
+
+# for some reason, need to use dev.off whenever this function throws an error in "par(op)"
+dev.off()
+
+```
+
+\pagebreak
+
+# Overall densities of different host species
+
+Roughly three tiers of host species: (1) dentifera & retrocurva, (2) pulicaria, parvula, dubia, & cerio, (3) ambigua & mendotae.
+
+```{r, fig.height=4,fig.width=4,echo=FALSE, warning=FALSE}
+# heat maps for total AUC host density 
+all_auc_density$Host.Species <- factor(all_auc_density$Host.Species, levels = all_auc_density$Host.Species[order(all_auc_density$Log.AUC.density)])
+
+auc_density_plot <- ggplot(all_auc_density, aes(x = Host.Species, y = Log.AUC.density)) +
+  geom_point(size = 2) +
+  xlab("") +
+  ylab("AUC of total density (Log)") +
+  ggtitle("Across all lakes")
+auc_density_plot + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+```{r, fig.height=4,fig.width=4,echo=FALSE, warning=FALSE}
+lakeyear_auc_density$Host.Species <- factor(lakeyear_auc_density$Host.Species, levels = all_auc_density$Host.Species[order(all_auc_density$Log.AUC.density)])
+
+auc_density_plot <- ggplot(lakeyear_auc_density, aes(x = Host.Species, y = Log.AUC.density)) +
+  geom_boxplot() +
+  xlab("") +
+  ylab("AUC of total density (Log)") +
+  ggtitle("Within each Lake/Year combo")
+auc_density_plot + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+
+\pagebreak
+
+# Total number surveyed of each host species 
+How many hosts were counted for all the parasite surveys?
+
+Intensive sampling in 2016 might drive up some of these numbers, especially dentifera and retrocurva.
+
+```{r, fig.height=4,fig.width=4,echo=FALSE, warning=FALSE}
+surveyed_tots <- clean_data %>%
+  select(Host.Species, Lake, Year, Total) %>%
+  unite(LakeYear, Lake, Year) %>%
+  group_by(Host.Species) %>%
+  summarise(sumTot = sum(Total))
+
+# alltogether <- clean_data %>% # total daphnia counted in parasite survey
+#   select(Host.Species, Lake, Year, Total) %>%
+#   summarise(sumTot = sum(Total))
+
+surveyed_tots$Host.Species <- factor(surveyed_tots$Host.Species, levels = surveyed_tots$Host.Species[order(surveyed_tots$sumTot)])
+
+surveyed_totsplot <- ggplot(surveyed_tots, aes(x = Host.Species, y = sumTot)) +
+  geom_point(size = 2) +
+  xlab("Host Species") +
+  ylab("Total individuals surveyed") +
+  ggtitle("Across all lakes")
+surveyed_totsplot + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+```
+
+```{r, fig.height=4,fig.width=4,echo=FALSE, warning=FALSE}
+surveyed_tots <- clean_data %>%
+  select(Host.Species, Lake, Year, Total) %>%
+  unite(LakeYear, Lake, Year) %>%
+  group_by(Host.Species, LakeYear) %>%
+  summarise(sumTot = sum(Total))
+  
+surveyed_tots$Host.Species <- factor(surveyed_tots$Host.Species, levels = surveyed_tots$Host.Species[order(surveyed_tots$sumTot)])
+
+surveyed_totsplot <- ggplot(surveyed_tots, aes(x = Host.Species, y = sumTot)) +
+  geom_boxplot() +
+  xlab("Host Species") +
+  ylab("Number") +
+  ggtitle("Number of hosts surveyed per lake, year")
+surveyed_totsplot + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+```
+
+# Shared AUC of total host density
+
+Integrated area of overlapping, total (regardless of infection status) host densities. 
+
+```{r, fig.height=7,fig.width=7,echo=FALSE, warning=FALSE}
+# heat maps for shared AUC of total host density 
+
+# get total amount of overlap in density across all lakes
+dat <- lakeyear_auc_shared_total_density %>%
+      select(Focal.Host, Other.Host, AUC.Shared.Density) %>%
+      group_by(Focal.Host, Other.Host) %>%
+      summarise(AUC.total = sum(AUC.Shared.Density)) %>%
+      mutate(Lake = "All",
+             logAUC = log(AUC.total + 1)) %>%
+      select(Focal.Host, Other.Host, Lake, logAUC)
+    
+dat <- as.data.frame(dat) # make into dataframe
+        
+# turn data frame into matrix (using bipartite package function)
+dat_matrix <- frame2webs(dat,
+                         varnames = c("Focal.Host", "Other.Host", "Lake", "logAUC"), 
+                         type.out = "list", 
+                         emptylist = FALSE)
+
+mat <- as.matrix(dat_matrix$All)
+
+# diag(mat) <- 0 #set diagonal to 0
+
+mat.text <- round(mat, digits = 1)
+    
+# my_palette <- colorRampPalette(c("white", "#6baed6", "#08306b"))
+
+# quantile breaks for each color; not sure if this approach is better or not    
+my_palette <- colorRampPalette(c("white", "#ffffd9", "#edf8b1", "#c7e9b4", "#7fcdbb", "#41b6c4",
+"#1d91c0"))
+
+quantile_breaks <- function(xs, n = 7) {
+  breaks <- quantile(xs, probs = seq(0, 1, length.out = n))
+  breaks[!duplicated(breaks)]
+}
+
+mat_breaks <- quantile_breaks(mat, n = 8)
+
+heatmap.2(mat,
+          cellnote = mat.text,
+          notecol = "black",
+          trace = "none",
+          density.info = "none",
+          margins =c(12,9), 
+          #main = "Shared AUC Total Density", 
+          dendrogram = "column",
+          key = FALSE,
+          col = my_palette,
+          breaks = mat_breaks)
+    
+```
+
+```{r, fig.height=7,fig.width=7,echo=FALSE, warning=FALSE}
+# heat maps for (shared AUC prev*density)/(shared AUC total host density)
+
+# ratio of how much infected host density overlaps between two species to how much total host density overlaps
+```
+
+\pagebreak
+
+# Heat map of Shared AUC, summed across all parasite species
+
+Parvula shares the most with Retrocurva (by far).
+Cerio shares the most with Dentifera (by far).
+Overall, Dentifera & Retrocurva share the most.
+
+
+But we should probably control for how much they overlap in today host density (shared_total_auc_density).
+
+
+```{r, fig.height=7,fig.width=7,echo=FALSE, warning=FALSE}
+# heat maps for shared AUC--summed across all parasites
+
+
+# use make mat function to host*host matrix for shared auc data
+auc_shared <- lakeyear_auc_shared_prev
+parasite.vec <- c(levels(auc_shared$Parasite.Species))
+
+dat <- auc_shared %>%
+  select(Parasite.Species, Focal.Host, Other.Host, AUC.prev) %>%
+  group_by(Focal.Host, Other.Host) %>%
+  summarise(AUC.total = sum(AUC.prev)) %>%
+  mutate(Lake = "All") %>%
+  select(Focal.Host, Other.Host, Lake, AUC.total)
+
+dat <- as.data.frame(dat) # make into dataframe
+    
+# turn data frame into matrix (using bipartite package function)
+dat_matrix <- frame2webs(dat, 
+                             varnames = c("Focal.Host", "Other.Host", "Lake", "AUC.total"), 
+                             type.out = "list", 
+                             emptylist = FALSE)
+    
+mat <- as.matrix(dat_matrix$All)
+mat <- mat[which(rowSums(mat) > 0), ] # drop rows full of zeros
+mat <- mat[, which(colSums(mat) > 0)] # drop columns full of zeros
+    
+
+
+mat.text <- round(mat, digits = 2)
+    
+my_palette <- colorRampPalette(c("white", "#ffffd9", "#edf8b1", "#c7e9b4", "#7fcdbb", "#41b6c4",
+"#1d91c0"))
+
+mat_breaks <- quantile_breaks(mat, n = 8)
+
+heatmap.2(mat,
+              cellnote = mat.text,
+              notecol = "black",
+              trace = "none",
+              density.info = "none",
+              margins =c(12,9), 
+              #main = "Shared AUC prev (all parasites combined)", 
+              dendrogram = "column",
+              key = FALSE,
+              col = my_palette,
+              breaks = mat_breaks)
+
+# for some reason, need to use dev.off whenever this function throws an error in "par(op)"
+#dev.off()
+
+```
+\pagebreak
+
+
+# Centrality notes
+
+* Centrality calculations for networks with fewer than 3 host nodes were dropped from the plots. 
+
+##Centrality metrics
+
+1. **Betweenness** measures how often a node serves as a bridge for the shortest path between other nodes. Calculated with weighted graph.
+2. **Closeness** measures how close a node is to all other nodes. Calculated with weighted graph.
+3. **Eigenvector** is complicated and takes into account second-order connections. Calculated with weighted graph.
+4. **Degree** is sum of number of edges per node.
+5. **Strength** is sum of all surrounding edge weights.
+
+
+
+
+\pagebreak
+
+# Shared AUC Prevalence--Centrality metrics (raw values)
+Each point is a centrality score for a host species in a given lake/year network. The edges between host-host nodes are weighted by the sum of all shared auc prevalences of all parasites. 
+
+* Dentifera & Retrocurva usually have the highest centrality values.
+* A lot of the betweenness values are 0
+
+```{r, fig.height=9,fig.width=7,echo=FALSE, warning=FALSE}
+# SHARED AUC PREVALENCE--HOST CENTRALITY CALCULATIONS
+
+# replicate level is Lake*Year combination, sum auc prev values across parasites
+auc_shares <- lakeyear_auc_shared_prev %>%
+  unite(LakeYear, Lake, Year) %>%
+  group_by(LakeYear, Focal.Host, Other.Host) %>%
+  summarise(AUC.tot = sum(AUC.prev)) %>%
+  select(Focal.Host, Other.Host, LakeYear, AUC.tot)
+
+# make sure it's a df 
+auc_shares <- as.data.frame(auc_shares)
+auc_shares$LakeYear <- as.factor(auc_shares$LakeYear)
+
+# create adjacency matrices, stored as list
+auc_shares_mat <- frame2webs(auc_shares, 
+                         varnames = c("Focal.Host", "Other.Host", "LakeYear", "AUC.tot"), 
+                         type.out = "list", 
+                         emptylist = FALSE)
+
+# requires vector of host names
+lake_year_vec <- c(levels(auc_shares$LakeYear))
+host.vec <- c(levels(auc_shares$Focal.Host))
+
+#outside of loop, set up empty matrix for data 
+btwn_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(btwn_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+clos_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(clos_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+eign_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(eign_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+alpha_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(eign_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+degr_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(degr_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+strn_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(strn_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+calc_centrality_host <- function(auc_shares_mat, clos_data, btwn_data, eign_data, degr_data, strn_data) {
+  
+  for (i in 1:length(lake_year_vec)) {
+
+    graph_thing <- graph_from_adjacency_matrix(auc_shares_mat[[i]],
+                                               mode = c("undirected"),
+                                               weighted = TRUE,
+                                               diag = FALSE) # create graph from list
+    
+    graph_thing <- igraph::delete.vertices(graph_thing, # drop the vertices without any connections
+                                  which(igraph::degree(graph_thing) < 1)) 
+
+    graph_thing_unw <- graph_from_adjacency_matrix(sign(auc_shares_mat[[i]]),
+                                                   mode = c("undirected"),
+                                                   weighted = TRUE,
+                                                   diag = FALSE) # create graph from list
+    
+    graph_thing_unw <- igraph::delete.vertices(graph_thing_unw, # drop the vertices without any connections
+                                  which(igraph::degree(graph_thing_unw) < 1)) 
+    
+    # use graph_thing_unw to calculate degree (unweighted)
+    degr_vals <- igraph::degree(graph_thing_unw)
+        
+    # record number of vertices & edges in graph (so we can drop appropriate ones later)
+    num_vertex <- igraph::vcount(graph_thing)
+    num_edge<- igraph::ecount(graph_thing)
+    
+    # need to calculate eigen_centrality & strength first, then we can change the edge weights...
+    eign_vals <- igraph::eigen_centrality(graph_thing)
+    strn_vals <- igraph::strength(graph_thing,
+                                  loops = FALSE)
+    
+    E(graph_thing)$weight <- mean(E(graph_thing)$weight)/E(graph_thing)$weight
+    
+    # calculate centrality metrics
+    btwn_vals <- igraph::betweenness(graph_thing)
+    clos_vals <- igraph::closeness(graph_thing)
+    
+    # vector of centrality metrics & labels
+    btwn_vals <- c(btwn_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    clos_vals <- c(clos_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    eign_vals <- c(eign_vals$vector, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    degr_vals <- c(degr_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    strn_vals <- c(strn_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    
+    # add vectors as rows to data frame
+    btwn_data <- union_all(btwn_data, as.data.frame(t(btwn_vals)))
+    clos_data <- union_all(clos_data, as.data.frame(t(clos_vals)))
+    eign_data <- union_all(eign_data, as.data.frame(t(eign_vals)))
+    degr_data <- union_all(degr_data, as.data.frame(t(degr_vals)))
+    strn_data <- union_all(strn_data, as.data.frame(t(strn_vals)))
+    
+    if (i == 1) {
+      btwn_data <- btwn_data[-1, ] #drop first row  
+      clos_data <- clos_data[-1, ]
+      eign_data <- eign_data[-1, ]
+      degr_data <- degr_data[-1, ]
+      strn_data <- strn_data[-1, ]
+    }
+  }  
+  list(btwn_data, clos_data, eign_data, degr_data, strn_data)
+}
+
+
+all_central_data <- calc_centrality_host(auc_shares_mat, clos_data, btwn_data, eign_data, degr_data, strn_data)
+names(all_central_data) <- c("Betweenness", "Closeness", "Eigenvector", "Degree", "Strength")
+
+btwn <- all_central_data$Betweenness %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Betweenness, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+clos <- all_central_data$Closeness %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Closeness, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+eign <- all_central_data$Eigenvector %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Eigenvector, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") 
+
+degr <- all_central_data$Degree %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Degree, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+strn <- all_central_data$Strength %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Strength, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+btwn$LakeYear <- as.factor(btwn$LakeYear)
+btwn$Vertices <- as.integer(btwn$Vertices)
+btwn$Edges <- as.integer(btwn$Edges)
+btwn$Host.Species <- as.factor(btwn$Host.Species)
+btwn$Betweenness <- as.numeric(btwn$Betweenness)
+
+clos$LakeYear <- as.factor(clos$LakeYear)
+clos$Vertices <- as.integer(clos$Vertices)
+clos$Edges <- as.integer(clos$Edges)
+clos$Host.Species <- as.factor(clos$Host.Species)
+clos$Closeness <- as.numeric(clos$Closeness)
+
+eign$LakeYear <- as.factor(eign$LakeYear)
+eign$Vertices <- as.integer(eign$Vertices)
+eign$Edges <- as.integer(eign$Edges)
+eign$Host.Species <- as.factor(eign$Host.Species)
+eign$Eigenvector <- as.numeric(eign$Eigenvector)
+
+degr$LakeYear <- as.factor(degr$LakeYear)
+degr$Vertices <- as.integer(degr$Vertices)
+degr$Edges <- as.integer(degr$Edges)
+degr$Host.Species <- as.factor(degr$Host.Species)
+degr$Degree <- as.numeric(degr$Degree)
+
+strn$LakeYear <- as.factor(strn$LakeYear)
+strn$Vertices <- as.integer(strn$Vertices)
+strn$Edges <- as.integer(strn$Edges)
+strn$Host.Species <- as.factor(strn$Host.Species)
+strn$Strength <- as.numeric(strn$Strength)
+
+p1 <- ggplot(btwn, aes(x = Host.Species, y = Betweenness)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Betweenness Centrality") +
+  ggtitle("")
+#p1 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p2 <- ggplot(clos, aes(x = Host.Species, y = Closeness)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Closeness Centrality") +
+  ggtitle("")
+#p2 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p3 <- ggplot(eign, aes(x = Host.Species, y = Eigenvector)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Eigenvector Centrality") +
+  ggtitle("")
+#p3 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p4 <- ggplot(degr, aes(x = Host.Species, y = Degree)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Degree") +
+  ggtitle("")
+#p4 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p5 <- ggplot(strn, aes(x = Host.Species, y = Strength)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Strength") +
+  ggtitle("")
+#p5 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+multiplot(p1 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p2 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p3 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          p4 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p5 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          cols = 2)
+```
+
+\pagebreak
+
+# Shared AUC Prevalence--Centrality metrics (rank transformed)
+Closer to 0 = higher centrality metric/rank
+
+
+```{r, fig.height=9,fig.width=7,echo=FALSE, warning=FALSE}
+# trying to rank transform the centrality data  
+rank_btwn <- btwn %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Betweenness.Rank = min_rank(-Betweenness),
+         Betweenness.PercRank = percent_rank(-Betweenness))
+
+rank_clos <- clos %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Closeness.Rank = min_rank(-Closeness),
+         Closeness.PercRank = percent_rank(-Closeness))
+
+rank_eign <- eign %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Eigenvector.Rank = min_rank(-Eigenvector),
+         Eigenvector.PercRank = percent_rank(-Eigenvector))
+
+rank_degr <- degr %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Degree.Rank = min_rank(-Degree),
+         Degree.PercRank = percent_rank(-Degree))
+
+rank_strn <- strn %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Strength.Rank = min_rank(-Strength),
+         Strength.PercRank = percent_rank(-Strength))
+
+
+rank_btwn <- as.data.frame(rank_btwn)
+rank_clos <- as.data.frame(rank_clos)
+rank_eign <- as.data.frame(rank_eign)
+rank_degr <- as.data.frame(rank_degr)
+rank_strn <- as.data.frame(rank_strn)
+
+ranked_central_a <- merge(rank_btwn, rank_clos, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central_b <- merge(rank_eign, rank_degr, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central_c <- merge(ranked_central_a, rank_strn, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central <- merge(ranked_central_c, ranked_central_b, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_all <- ranked_central %>%
+  select(LakeYear, Host.Species, Betweenness.PercRank, Closeness.PercRank, Eigenvector.PercRank,
+         Degree.PercRank, Strength.PercRank) %>%
+  gather(Centrality_Metric, Percent_Rank, Betweenness.PercRank:Strength.PercRank)
+
+ranked_all$Centrality_Metric <- as.factor(ranked_all$Centrality_Metric)
+
+p0 <- ggplot(ranked_all, aes(x = Host.Species, y = Percent_Rank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Centrality Rank (Combined metrics)") +
+ # annotate("text", x = 0.5, y = 1, label = "A") +
+  ggtitle("")
+
+p1 <- ggplot(rank_btwn, aes(x = Host.Species, y = Betweenness.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Betweenness Centrality (rank)") +
+ # annotate("text", x = 0.5, y = 1, label = "C") +
+  ggtitle("")
+#p1 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p2 <- ggplot(rank_clos, aes(x = Host.Species, y = Closeness.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Closeness Centrality (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "E") +
+  ggtitle("")
+#p2 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p3 <- ggplot(rank_eign, aes(x = Host.Species, y = Eigenvector.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Eigenvector Centrality (rank)") +
+#  annotate("text", x = 0., y = 1, label = "B") +
+  ggtitle("")
+#p3 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p4 <- ggplot(rank_degr, aes(x = Host.Species, y = Degree.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Degree (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "D") +
+  ggtitle("")
+#p4 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p5 <- ggplot(rank_strn, aes(x = Host.Species, y = Strength.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Strength (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "F") +
+  ggtitle("")
+#p5 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+multiplot(p0 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p1 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p2 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          #p2 + theme_few(),
+          p3 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p4 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p5 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          #p5 + theme_few(),
+          cols = 2)
+
+```
+
+\pagebreak
+
+# Shared AUC Prevalence--Centrality Ranks Area Histogram
+
+There are 3 tiers of host species: dentifera & retrocurva are very left skewed, cerio & parvula are left skewed to a lesser extent, and dubia & especially pulicaria are more evenly distributed.
+
+```{r, fig.height=6,fig.width=7,echo=FALSE, warning=FALSE}
+# geom_area plots of centrality rank counts for each host species
+
+ranked_alls <- ranked_central %>%
+  select(LakeYear, Host.Species, Betweenness.Rank, Closeness.Rank, Eigenvector.Rank,
+         Degree.Rank, Strength.Rank) %>%
+  gather(Centrality_Metric, Rank, Betweenness.Rank:Strength.Rank) 
+  
+
+ranked_alls$Centrality_Metric <- as.factor(ranked_alls$Centrality_Metric)
+
+p001 <- ggplot(ranked_alls, aes(x = Rank, fill = Centrality_Metric)) +
+  geom_area(stat = "bin", binwidth = 1, position = "identity", alpha = 0.2)
+  #geom_area(aes(colour = Centrality_Metric, 
+#                fill= fct_reorder(Centrality_Metric, Rank, .desc = TRUE)), 
+#            position = 'identity') 
+p001 + facet_wrap(~Host.Species)  + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "bottom", legend.title = element_blank())
+```
+
+\pagebreak
+
+# dot & line plot of centrality metrics
+
+
+```{r, fig.height=5,fig.width=6,echo=FALSE, warning=FALSE}
+ranked_alls_CI <- ranked_alls %>%
+  na.omit() %>%
+  group_by(Host.Species, Centrality_Metric) %>%
+  summarize(n = n(), mn = mean(Rank), var = var(Rank), sd = sd(Rank)) %>% 
+  mutate(se = sd / sqrt(n), LCI = mn + qnorm(0.025) * se, UCI = mn + qnorm(0.975) *se)
+
+
+ranked_alls_CI$Host.Species <- factor(ranked_alls_CI$Host.Species, levels = ranked_alls_CI$Host.Species[order(ranked_alls_CI$mn)])
+
+p1 <- ggplot(ranked_alls_CI, aes(x = Host.Species, y = mn)) +
+  geom_point() +
+  geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylim(1, 4) +
+  ylab("Centrality Rank") +
+  xlab("")
+p1 + facet_wrap(~Centrality_Metric) + theme_few() + coord_flip()
+
+```
+
+
+
+```{r, fig.height=5,fig.width=5,echo=FALSE, warning=FALSE, include=FALSE}
+# NOT READY TO INCLUDE YET!!
+
+# Centrality rank vs total host density
+densities <- lakeyear_auc_density %>%
+  unite(LakeYear, Lake, Year) 
+  
+central_density <- merge(ranked_central, densities, by = c("LakeYear", "Host.Species"))
+
+ranks_central_density <- central_density %>%
+  na.omit() %>%
+  select(LakeYear, Host.Species, Betweenness.Rank, Closeness.Rank, Eigenvector.Rank,
+         Degree.Rank, Strength.Rank, AUC.density) %>%
+  gather(Centrality_Metric, Rank, Betweenness.Rank:Strength.Rank) %>%
+  mutate(log.AUC.density = log(AUC.density + 1)) %>%
+  filter(LakeYear != "Woodland_2014"|Host.Species != "dubia",
+         LakeYear != "Mill_2014"|Host.Species != "dubia") # dubia density is 0 for these lakes
+
+values_central_density <- central_density %>%
+  na.omit() %>%
+  select(LakeYear, Host.Species, Betweenness, Closeness, Eigenvector,
+         Degree, Strength, AUC.density) %>%
+  gather(Centrality_Metric, Value, Betweenness:Strength) %>%
+  mutate(log.AUC.density = log(AUC.density + 1)) %>%
+  filter(LakeYear != "Woodland_2014"|Host.Species != "dubia",
+         LakeYear != "Mill_2014"|Host.Species != "dubia") # dubia density is 0 for these lakes
+
+eign_density <- values_central_density %>%
+  filter(Centrality_Metric == "Eigenvector")
+
+  
+#str(ranked_alls_CI)
+#str(all_auc_density)
+
+p1 <- ggplot(ranks_central_density, aes(x = log.AUC.density, y = Rank, color = Centrality_Metric)) +
+  geom_point() +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Centrality Rank") +
+  xlab("")
+#p1 + facet_wrap(~Host.Species) + theme_few()
+
+
+p1 <- ggplot(ranks_central_density, aes(x = AUC.density, y = Rank, color = Host.Species)) +
+  geom_point(alpha = 0.3, size = 3) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Centrality Rank") +
+  xlab("")
+#p1 + theme_few()
+
+p1 <- ggplot(eign_density, aes(x = AUC.density, y = Value, color = Host.Species)) +
+  geom_point(alpha = 0.3, size = 3) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Centrality Rank") +
+  xlab("")
+#p1 + theme_few()
+```
+
+\pagebreak
+
+# Average centrality rank vs total host density (log scale)
+
+```{r, fig.height=6,fig.width=6,echo=FALSE, warning=FALSE}
+densities <- lakeyear_auc_density %>%
+  unite(LakeYear, Lake, Year) 
+  
+central_density <- merge(ranked_central, densities, by = c("LakeYear", "Host.Species"))
+
+
+mean_ranks <- central_density %>%
+  na.omit() %>%
+  select(LakeYear, Host.Species, Betweenness.Rank, Closeness.Rank, Eigenvector.Rank,
+         Degree.Rank, Strength.Rank, AUC.density) %>%
+  #gather(Centrality_Metric, Rank, Betweenness.Rank:Strength.Rank) %>%
+  mutate(log.AUC.density = log(AUC.density + 1),
+         mean.rank = (Betweenness.Rank + Closeness.Rank + Eigenvector.Rank + Degree.Rank + Strength.Rank)/5) %>%
+  filter(LakeYear != "Woodland_2014"|Host.Species != "dubia",
+         LakeYear != "Mill_2014"|Host.Species != "dubia") # dubia density is 0 for these lakes
+
+
+p1 <- ggplot(mean_ranks, aes(x = log.AUC.density, y = mean.rank, color = Host.Species)) +
+  geom_point(alpha = 0.5, size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  #geom_smooth(method = lm) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Centrality Rank") +
+  xlab("AUC of total density (log)") + 
+  scale_color_colorblind()
+  #scale_color_manual(values = c("#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462"))
+p1 + theme_few()  + theme(legend.position = "bottom")
+```
+
+# Average centrality rank vs total host density (log scale)
+
+```{r, fig.height=6,fig.width=6,echo=FALSE, warning=FALSE}
+
+p2 <- ggplot(mean_ranks, aes(x = log.AUC.density, y = mean.rank, color = Host.Species)) +
+  geom_point(alpha = 0.5, size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Centrality Rank") +
+  xlab("AUC of total density (log)") + 
+  scale_color_colorblind() 
+  #scale_color_manual(values = c("#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462"))
+p2 + facet_wrap(~Host.Species) + theme_few() + theme(legend.position = "bottom")
+```
+
+```{r, fig.height=6,fig.width=6,echo=FALSE, warning=FALSE}
+p3 <- ggplot(mean_ranks, aes(x = AUC.density, y = mean.rank, color = Host.Species)) +
+  geom_point(alpha = 0.5, size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Average Centrality Rank") +
+  xlab("AUC of total density (millions)") + 
+  scale_color_colorblind() +
+  scale_x_continuous(breaks = c(0, 3*10^7, 6*10^7, 9*10^7, 1.2*10^8),
+                     label = c("0", "30", "60", "90", "120"))
+  #scale_color_manual(values = c("#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462"))
+p3 + theme_few()  + theme(legend.position = "bottom")
+```
+
+```{r, fig.height=6,fig.width=6,echo=FALSE, warning=FALSE}
+p4 <- ggplot(mean_ranks, aes(x = AUC.density, y = mean.rank, color = Host.Species)) +
+  geom_point(alpha = 0.5, size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Average Centrality Rank") +
+  xlab("AUC of total density (millions)") + 
+  scale_color_colorblind() +
+  scale_x_continuous(breaks = c(0, 3*10^7, 6*10^7, 9*10^7, 1.2*10^8),
+                     label = c("0", "30", "60", "90", "120"))
+  #scale_color_manual(values = c("#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462"))
+p4 + facet_wrap(~Host.Species) + theme_few()  + theme(legend.position = "bottom")
+```
+
+\pagebreak
+
+# Average centrality measures vs total host density (log scale)
+Raw values for centrality measures instead of ranks.
+
+```{r, fig.height=6,fig.width=6,echo=FALSE, warning=FALSE}
+str(central_density)
+
+
+# check raw centrality data vs log(auc density) of each host
+
+p4 <- ggplot(central_density, aes(x = log(AUC.density + 1), y = Eigenvector, color = Host.Species)) +
+  geom_point(alpha = 0.5, size = 3) +
+  geom_smooth(method = lm, se = FALSE) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  ylab("Average Centrality Rank") +
+  xlab("AUC of total density (millions)") + 
+  scale_color_colorblind() +
+  scale_x_continuous(breaks = c(0, 3*10^7, 6*10^7, 9*10^7, 1.2*10^8),
+                     label = c("0", "30", "60", "90", "120"))
+  #scale_color_manual(values = c("#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462"))
+p4 + facet_wrap(~Host.Species) + theme_few()  + theme(legend.position = "bottom")
+```
+
+
+
+
+\pagebreak
+
+# Host AUC Density vs AUC of prevalence of different parasites
+
+```{r, fig.height=6,fig.width=6,echo=FALSE, warning=FALSE}
+
+densities <- lakeyear_auc_density %>%
+  unite(LakeYear, Lake, Year) 
+
+parasites <- lakeyear_auc_prev %>%
+  unite(LakeYear, Lake, Year)
+
+joined_auc <- full_join(densities, parasites)
+
+joined_auc$LakeYear <- as.factor(joined_auc$LakeYear)
+joined_auc$Host.Species <- as.factor(joined_auc$Host.Species)
+
+joined_auc_norm <- joined_auc %>%
+  filter(LakeYear != "North_2016" & LakeYear != "Pickerel_2016" & 
+         LakeYear != "Gosling_2016" & LakeYear != "Sullivan_2016") %>%
+  filter(Max.Prevalence > 0)
+
+
+p5 <- ggplot(joined_auc_norm, aes(x = AUC.density, y = Max.Prevalence, color = Host.Species)) +
+  geom_point(size = 1) +
+  ylim(0, 0.25) +
+  #geom_smooth(method = lm, se = FALSE) +
+  #geom_errorbar(aes(ymin=LCI, ymax=UCI), width= 0 ) +
+  scale_color_colorblind() 
+  # scale_x_continuous(breaks = c(0, 3*10^7, 6*10^7, 9*10^7, 1.2*10^8),
+  #                    label = c("0", "30", "60", "90", "120"))
+  #scale_color_manual(values = c("#8dd3c7", "#ffffb3", "#bebada", "#fb8072", "#80b1d3", "#fdb462"))
+p5 + facet_wrap(~Parasite.Species) + theme_few()  + theme(legend.position = "bottom")
+
+```
+
+```{r, fig.height=6,fig.width=6,echo=FALSE, warning=FALSE}
+# Relative host index of dentifera vs prevalence of different parasites
+
+```
+\pagebreak
+
+# Shared AUC Prev-x-Density--Centrality metrics (raw values)
+
+```{r, fig.height=9,fig.width=7,echo=FALSE, warning=FALSE}
+# SHARED AUC PREVALENCE--HOST CENTRALITY CALCULATIONS
+
+# replicate level is Lake*Year combination, sum auc prev values across parasites
+auc_shares <- lakeyear_auc_shared_prevdens %>%
+  unite(LakeYear, Lake, Year) %>%
+  group_by(LakeYear, Focal.Host, Other.Host) %>%
+  summarise(AUC.tot = sum(AUC.prev)) %>%
+  select(Focal.Host, Other.Host, LakeYear, AUC.tot)
+
+# make sure it's a df 
+auc_shares <- as.data.frame(auc_shares)
+auc_shares$LakeYear <- as.factor(auc_shares$LakeYear)
+
+# create adjacency matrices, stored as list
+auc_shares_mat <- frame2webs(auc_shares, 
+                         varnames = c("Focal.Host", "Other.Host", "LakeYear", "AUC.tot"), 
+                         type.out = "list", 
+                         emptylist = FALSE)
+
+# requires vector of host names
+lake_year_vec <- c(levels(auc_shares$LakeYear))
+host.vec <- c(levels(auc_shares$Focal.Host))
+
+#outside of loop, set up empty matrix for data 
+btwn_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(btwn_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+clos_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(clos_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+eign_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(eign_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+alpha_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(eign_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+degr_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(degr_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+strn_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(strn_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+calc_centrality_host <- function(auc_shares_mat, clos_data, btwn_data, eign_data, degr_data, strn_data) {
+  
+  for (i in 1:length(lake_year_vec)) {
+
+    graph_thing <- graph_from_adjacency_matrix(auc_shares_mat[[i]],
+                                               mode = c("undirected"),
+                                               weighted = TRUE,
+                                               diag = FALSE) # create graph from list
+    
+    graph_thing <- igraph::delete.vertices(graph_thing, # drop the vertices without any connections
+                                  which(igraph::degree(graph_thing) < 1)) 
+
+    graph_thing_unw <- graph_from_adjacency_matrix(sign(auc_shares_mat[[i]]),
+                                                   mode = c("undirected"),
+                                                   weighted = TRUE,
+                                                   diag = FALSE) # create graph from list
+    
+    graph_thing_unw <- igraph::delete.vertices(graph_thing_unw, # drop the vertices without any connections
+                                  which(igraph::degree(graph_thing_unw) < 1)) 
+    
+    # use graph_thing_unw to calculate degree (unweighted)
+    degr_vals <- igraph::degree(graph_thing_unw)
+        
+    # record number of vertices & edges in graph (so we can drop appropriate ones later)
+    num_vertex <- igraph::vcount(graph_thing)
+    num_edge<- igraph::ecount(graph_thing)
+    
+    # need to calculate eigen_centrality & strength first, then we can change the edge weights...
+    eign_vals <- igraph::eigen_centrality(graph_thing)
+    strn_vals <- igraph::strength(graph_thing,
+                                  loops = FALSE)
+    
+    E(graph_thing)$weight <- mean(E(graph_thing)$weight)/E(graph_thing)$weight
+    
+    # calculate centrality metrics
+    btwn_vals <- igraph::betweenness(graph_thing)
+    clos_vals <- igraph::closeness(graph_thing)
+    
+    # vector of centrality metrics & labels
+    btwn_vals <- c(btwn_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    clos_vals <- c(clos_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    eign_vals <- c(eign_vals$vector, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    degr_vals <- c(degr_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    strn_vals <- c(strn_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    
+    # add vectors as rows to data frame
+    btwn_data <- union_all(btwn_data, as.data.frame(t(btwn_vals)))
+    clos_data <- union_all(clos_data, as.data.frame(t(clos_vals)))
+    eign_data <- union_all(eign_data, as.data.frame(t(eign_vals)))
+    degr_data <- union_all(degr_data, as.data.frame(t(degr_vals)))
+    strn_data <- union_all(strn_data, as.data.frame(t(strn_vals)))
+    
+    if (i == 1) {
+      btwn_data <- btwn_data[-1, ] #drop first row  
+      clos_data <- clos_data[-1, ]
+      eign_data <- eign_data[-1, ]
+      degr_data <- degr_data[-1, ]
+      strn_data <- strn_data[-1, ]
+    }
+  }  
+  list(btwn_data, clos_data, eign_data, degr_data, strn_data)
+}
+
+
+all_central_data <- calc_centrality_host(auc_shares_mat, clos_data, btwn_data, eign_data, degr_data, strn_data)
+names(all_central_data) <- c("Betweenness", "Closeness", "Eigenvector", "Degree", "Strength")
+
+btwn <- all_central_data$Betweenness %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Betweenness, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+clos <- all_central_data$Closeness %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Closeness, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+eign <- all_central_data$Eigenvector %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Eigenvector, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") 
+
+degr <- all_central_data$Degree %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Degree, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+strn <- all_central_data$Strength %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Strength, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+btwn$LakeYear <- as.factor(btwn$LakeYear)
+btwn$Vertices <- as.integer(btwn$Vertices)
+btwn$Edges <- as.integer(btwn$Edges)
+btwn$Host.Species <- as.factor(btwn$Host.Species)
+btwn$Betweenness <- as.numeric(btwn$Betweenness)
+
+clos$LakeYear <- as.factor(clos$LakeYear)
+clos$Vertices <- as.integer(clos$Vertices)
+clos$Edges <- as.integer(clos$Edges)
+clos$Host.Species <- as.factor(clos$Host.Species)
+clos$Closeness <- as.numeric(clos$Closeness)
+
+eign$LakeYear <- as.factor(eign$LakeYear)
+eign$Vertices <- as.integer(eign$Vertices)
+eign$Edges <- as.integer(eign$Edges)
+eign$Host.Species <- as.factor(eign$Host.Species)
+eign$Eigenvector <- as.numeric(eign$Eigenvector)
+
+degr$LakeYear <- as.factor(degr$LakeYear)
+degr$Vertices <- as.integer(degr$Vertices)
+degr$Edges <- as.integer(degr$Edges)
+degr$Host.Species <- as.factor(degr$Host.Species)
+degr$Degree <- as.integer(degr$Degree)
+
+strn$LakeYear <- as.factor(strn$LakeYear)
+strn$Vertices <- as.integer(strn$Vertices)
+strn$Edges <- as.integer(strn$Edges)
+strn$Host.Species <- as.factor(strn$Host.Species)
+strn$Strength <- as.integer(strn$Strength)
+
+p1 <- ggplot(btwn, aes(x = Host.Species, y = Betweenness)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Betweenness Centrality") +
+  ggtitle("")
+#p1 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p2 <- ggplot(clos, aes(x = Host.Species, y = Closeness)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Closeness Centrality") +
+  ggtitle("")
+#p2 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p3 <- ggplot(eign, aes(x = Host.Species, y = Eigenvector)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Eigenvector Centrality") +
+  ggtitle("")
+#p3 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p4 <- ggplot(degr, aes(x = Host.Species, y = Degree)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Degree") +
+  ggtitle("")
+#p4 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p5 <- ggplot(strn, aes(x = Host.Species, y = Strength)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Strength") +
+  ggtitle("")
+#p5 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+multiplot(p1 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p2 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p3 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          p4 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p5 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          cols = 2)
+```
+
+\pagebreak
+
+# Shared AUC Prev-x-Density--Centrality metrics (rank transformed)
+
+```{r, fig.height=9,fig.width=7,echo=FALSE, warning=FALSE}
+# trying to rank transform the centrality data  
+rank_btwn <- btwn %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Betweenness.Rank = min_rank(-Betweenness),
+         Betweenness.PercRank = percent_rank(-Betweenness))
+
+rank_clos <- clos %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Closeness.Rank = min_rank(-Closeness),
+         Closeness.PercRank = percent_rank(-Closeness))
+
+rank_eign <- eign %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Eigenvector.Rank = min_rank(-Eigenvector),
+         Eigenvector.PercRank = percent_rank(-Eigenvector))
+
+rank_degr <- degr %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Degree.Rank = min_rank(-Degree),
+         Degree.PercRank = percent_rank(-Degree))
+
+rank_strn <- strn %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Strength.Rank = min_rank(-Strength),
+         Strength.PercRank = percent_rank(-Strength))
+
+
+rank_btwn <- as.data.frame(rank_btwn)
+rank_clos <- as.data.frame(rank_clos)
+rank_eign <- as.data.frame(rank_eign)
+rank_degr <- as.data.frame(rank_degr)
+rank_strn <- as.data.frame(rank_strn)
+
+ranked_central_a <- merge(rank_btwn, rank_clos, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central_b <- merge(rank_eign, rank_degr, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central_c <- merge(ranked_central_a, rank_strn, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central <- merge(ranked_central_c, ranked_central_b, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_all <- ranked_central %>%
+  select(LakeYear, Host.Species, Betweenness.PercRank, Closeness.PercRank, Eigenvector.PercRank,
+         Degree.PercRank, Strength.PercRank) %>%
+  gather(Centrality_Metric, Percent_Rank, Betweenness.PercRank:Strength.PercRank)
+
+ranked_all$Centrality_Metric <- as.factor(ranked_all$Centrality_Metric)
+
+p0 <- ggplot(ranked_all, aes(x = Host.Species, y = Percent_Rank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Centrality Rank (Combined metrics)") +
+ # annotate("text", x = 0.5, y = 1, label = "A") +
+  ggtitle("")
+
+p1 <- ggplot(rank_btwn, aes(x = Host.Species, y = Betweenness.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Betweenness Centrality (rank)") +
+ # annotate("text", x = 0.5, y = 1, label = "C") +
+  ggtitle("")
+#p1 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p2 <- ggplot(rank_clos, aes(x = Host.Species, y = Closeness.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Closeness Centrality (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "E") +
+  ggtitle("")
+#p2 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p3 <- ggplot(rank_eign, aes(x = Host.Species, y = Eigenvector.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Eigenvector Centrality (rank)") +
+#  annotate("text", x = 0., y = 1, label = "B") +
+  ggtitle("")
+#p3 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p4 <- ggplot(rank_degr, aes(x = Host.Species, y = Degree.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Degree (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "D") +
+  ggtitle("")
+#p4 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p5 <- ggplot(rank_strn, aes(x = Host.Species, y = Strength.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Strength (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "F") +
+  ggtitle("")
+#p5 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+multiplot(p0 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p1 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p2 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          #p2 + theme_few(),
+          p3 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p4 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p5 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          #p5 + theme_few(),
+          cols = 2)
+
+```
+
+\pagebreak
+
+# Shared AUC Prev-x-Density--Centrality Ranks Area Histogram
+
+```{r, fig.height=6,fig.width=7,echo=FALSE, warning=FALSE}
+# geom_area plots of centrality rank counts for each host species
+
+ranked_alls <- ranked_central %>%
+  select(LakeYear, Host.Species, Betweenness.Rank, Closeness.Rank, Eigenvector.Rank,
+         Degree.Rank, Strength.Rank) %>%
+  gather(Centrality_Metric, Rank, Betweenness.Rank:Strength.Rank) 
+  
+
+ranked_alls$Centrality_Metric <- as.factor(ranked_alls$Centrality_Metric)
+
+p001 <- ggplot(ranked_alls, aes(x = Rank, fill = Centrality_Metric)) +
+  geom_area(stat = "bin", binwidth = 1, position = "identity", alpha = 0.2) 
+  #geom_area(aes(colour = Centrality_Metric, 
+#                fill= fct_reorder(Centrality_Metric, Rank, .desc = TRUE)), 
+#            position = 'identity') 
+p001 + facet_wrap(~Host.Species)  + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "bottom", legend.title = element_blank())
+```
+
+
+
+\pagebreak
+
+# Log-scaled Shared AUC Prev-x-Density--Centrality metrics (raw values)
+
+```{r, fig.height=9,fig.width=7,echo=FALSE, warning=FALSE}
+# SHARED AUC PREVALENCE--HOST CENTRALITY CALCULATIONS
+
+# replicate level is Lake*Year combination, sum auc prev values across parasites
+auc_shares <- lakeyear_auc_shared_prevdens %>%
+  unite(LakeYear, Lake, Year) %>%
+  group_by(LakeYear, Focal.Host, Other.Host) %>%
+  summarise(AUC.tot = log(sum(AUC.prev) + 1)) %>%
+  select(Focal.Host, Other.Host, LakeYear, AUC.tot)
+
+# make sure it's a df 
+auc_shares <- as.data.frame(auc_shares)
+auc_shares$LakeYear <- as.factor(auc_shares$LakeYear)
+
+# create adjacency matrices, stored as list
+auc_shares_mat <- frame2webs(auc_shares, 
+                         varnames = c("Focal.Host", "Other.Host", "LakeYear", "AUC.tot"), 
+                         type.out = "list", 
+                         emptylist = FALSE)
+
+# requires vector of host names
+lake_year_vec <- c(levels(auc_shares$LakeYear))
+host.vec <- c(levels(auc_shares$Focal.Host))
+
+#outside of loop, set up empty matrix for data 
+btwn_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(btwn_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+clos_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(clos_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+eign_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(eign_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+alpha_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(eign_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+degr_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(degr_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+strn_data <- data.frame(matrix(rep(NA, 1*11), nrow = 1))
+names(strn_data) <- c(host.vec, "LakeYear", "Vertices", "Edges")
+
+calc_centrality_host <- function(auc_shares_mat, clos_data, btwn_data, eign_data, degr_data, strn_data) {
+  
+  for (i in 1:length(lake_year_vec)) {
+
+    graph_thing <- graph_from_adjacency_matrix(auc_shares_mat[[i]],
+                                               mode = c("undirected"),
+                                               weighted = TRUE,
+                                               diag = FALSE) # create graph from list
+    
+    graph_thing <- igraph::delete.vertices(graph_thing, # drop the vertices without any connections
+                                  which(igraph::degree(graph_thing) < 1)) 
+
+    graph_thing_unw <- graph_from_adjacency_matrix(sign(auc_shares_mat[[i]]),
+                                                   mode = c("undirected"),
+                                                   weighted = TRUE,
+                                                   diag = FALSE) # create graph from list
+    
+    graph_thing_unw <- igraph::delete.vertices(graph_thing_unw, # drop the vertices without any connections
+                                  which(igraph::degree(graph_thing_unw) < 1)) 
+    
+    # use graph_thing_unw to calculate degree (unweighted)
+    degr_vals <- igraph::degree(graph_thing_unw)
+        
+    # record number of vertices & edges in graph (so we can drop appropriate ones later)
+    num_vertex <- igraph::vcount(graph_thing)
+    num_edge<- igraph::ecount(graph_thing)
+    
+    # need to calculate eigen_centrality & strength first, then we can change the edge weights...
+    eign_vals <- igraph::eigen_centrality(graph_thing)
+    strn_vals <- igraph::strength(graph_thing,
+                                  loops = FALSE)
+    
+    E(graph_thing)$weight <- mean(E(graph_thing)$weight)/E(graph_thing)$weight
+    
+    # calculate centrality metrics
+    btwn_vals <- igraph::betweenness(graph_thing)
+    clos_vals <- igraph::closeness(graph_thing)
+    
+    # vector of centrality metrics & labels
+    btwn_vals <- c(btwn_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    clos_vals <- c(clos_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    eign_vals <- c(eign_vals$vector, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    degr_vals <- c(degr_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    strn_vals <- c(strn_vals, "LakeYear" = paste(lake_year_vec[i]), 
+                   "Vertices" = paste(num_vertex), "Edges" = paste(num_edge))
+    
+    # add vectors as rows to data frame
+    btwn_data <- union_all(btwn_data, as.data.frame(t(btwn_vals)))
+    clos_data <- union_all(clos_data, as.data.frame(t(clos_vals)))
+    eign_data <- union_all(eign_data, as.data.frame(t(eign_vals)))
+    degr_data <- union_all(degr_data, as.data.frame(t(degr_vals)))
+    strn_data <- union_all(strn_data, as.data.frame(t(strn_vals)))
+    
+    if (i == 1) {
+      btwn_data <- btwn_data[-1, ] #drop first row  
+      clos_data <- clos_data[-1, ]
+      eign_data <- eign_data[-1, ]
+      degr_data <- degr_data[-1, ]
+      strn_data <- strn_data[-1, ]
+    }
+  }  
+  list(btwn_data, clos_data, eign_data, degr_data, strn_data)
+}
+
+
+all_central_data <- calc_centrality_host(auc_shares_mat, clos_data, btwn_data, eign_data, degr_data, strn_data)
+names(all_central_data) <- c("Betweenness", "Closeness", "Eigenvector", "Degree", "Strength")
+
+btwn <- all_central_data$Betweenness %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Betweenness, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+clos <- all_central_data$Closeness %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Closeness, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+eign <- all_central_data$Eigenvector %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Eigenvector, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") 
+
+degr <- all_central_data$Degree %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Degree, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+strn <- all_central_data$Strength %>%
+  filter(Vertices > 2) %>%
+  gather(Host.Species, Strength, ambigua:retrocurva) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae")
+
+btwn$LakeYear <- as.factor(btwn$LakeYear)
+btwn$Vertices <- as.integer(btwn$Vertices)
+btwn$Edges <- as.integer(btwn$Edges)
+btwn$Host.Species <- as.factor(btwn$Host.Species)
+btwn$Betweenness <- as.numeric(btwn$Betweenness)
+
+clos$LakeYear <- as.factor(clos$LakeYear)
+clos$Vertices <- as.integer(clos$Vertices)
+clos$Edges <- as.integer(clos$Edges)
+clos$Host.Species <- as.factor(clos$Host.Species)
+clos$Closeness <- as.numeric(clos$Closeness)
+
+eign$LakeYear <- as.factor(eign$LakeYear)
+eign$Vertices <- as.integer(eign$Vertices)
+eign$Edges <- as.integer(eign$Edges)
+eign$Host.Species <- as.factor(eign$Host.Species)
+eign$Eigenvector <- as.numeric(eign$Eigenvector)
+
+degr$LakeYear <- as.factor(degr$LakeYear)
+degr$Vertices <- as.integer(degr$Vertices)
+degr$Edges <- as.integer(degr$Edges)
+degr$Host.Species <- as.factor(degr$Host.Species)
+degr$Degree <- as.integer(degr$Degree)
+
+strn$LakeYear <- as.factor(strn$LakeYear)
+strn$Vertices <- as.integer(strn$Vertices)
+strn$Edges <- as.integer(strn$Edges)
+strn$Host.Species <- as.factor(strn$Host.Species)
+strn$Strength <- as.integer(strn$Strength)
+
+p1 <- ggplot(btwn, aes(x = Host.Species, y = Betweenness)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Betweenness Centrality") +
+  ggtitle("")
+#p1 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p2 <- ggplot(clos, aes(x = Host.Species, y = Closeness)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Closeness Centrality") +
+  ggtitle("")
+#p2 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p3 <- ggplot(eign, aes(x = Host.Species, y = Eigenvector)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Eigenvector Centrality") +
+  ggtitle("")
+#p3 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p4 <- ggplot(degr, aes(x = Host.Species, y = Degree)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Degree") +
+  ggtitle("")
+#p4 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p5 <- ggplot(strn, aes(x = Host.Species, y = Strength)) +
+  geom_violin() +
+  geom_jitter(height = 0, alpha = 0.5) +
+  xlab("Host Species") +
+  ylab("Strength") +
+  ggtitle("")
+#p5 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+multiplot(p1 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p2 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p3 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          p4 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p5 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          cols = 2)
+```
+
+\pagebreak
+
+# Log-scaled Shared AUC Prev-x-Density--Centrality metrics (rank transformed)
+
+```{r, fig.height=9,fig.width=7,echo=FALSE, warning=FALSE}
+# trying to rank transform the centrality data  
+rank_btwn <- btwn %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Betweenness.Rank = min_rank(-Betweenness),
+         Betweenness.PercRank = percent_rank(-Betweenness))
+
+rank_clos <- clos %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Closeness.Rank = min_rank(-Closeness),
+         Closeness.PercRank = percent_rank(-Closeness))
+
+rank_eign <- eign %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Eigenvector.Rank = min_rank(-Eigenvector),
+         Eigenvector.PercRank = percent_rank(-Eigenvector))
+
+rank_degr <- degr %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Degree.Rank = min_rank(-Degree),
+         Degree.PercRank = percent_rank(-Degree))
+
+rank_strn <- strn %>%
+  group_by(LakeYear) %>%
+  filter(Host.Species != "ambigua" & Host.Species != "mendotae") %>%
+  mutate(Strength.Rank = min_rank(-Strength),
+         Strength.PercRank = percent_rank(-Strength))
+
+
+rank_btwn <- as.data.frame(rank_btwn)
+rank_clos <- as.data.frame(rank_clos)
+rank_eign <- as.data.frame(rank_eign)
+rank_degr <- as.data.frame(rank_degr)
+rank_strn <- as.data.frame(rank_strn)
+
+ranked_central_a <- merge(rank_btwn, rank_clos, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central_b <- merge(rank_eign, rank_degr, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central_c <- merge(ranked_central_a, rank_strn, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_central <- merge(ranked_central_c, ranked_central_b, 
+                        by = c("LakeYear", "Host.Species", "Vertices", "Edges"))
+
+ranked_all <- ranked_central %>%
+  select(LakeYear, Host.Species, Betweenness.PercRank, Closeness.PercRank, Eigenvector.PercRank,
+         Degree.PercRank, Strength.PercRank) %>%
+  gather(Centrality_Metric, Percent_Rank, Betweenness.PercRank:Strength.PercRank)
+
+ranked_all$Centrality_Metric <- as.factor(ranked_all$Centrality_Metric)
+
+p0 <- ggplot(ranked_all, aes(x = Host.Species, y = Percent_Rank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Centrality Rank (Combined metrics)") +
+ # annotate("text", x = 0.5, y = 1, label = "A") +
+  ggtitle("")
+
+p1 <- ggplot(rank_btwn, aes(x = Host.Species, y = Betweenness.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Betweenness Centrality (rank)") +
+ # annotate("text", x = 0.5, y = 1, label = "C") +
+  ggtitle("")
+#p1 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p2 <- ggplot(rank_clos, aes(x = Host.Species, y = Closeness.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Closeness Centrality (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "E") +
+  ggtitle("")
+#p2 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p3 <- ggplot(rank_eign, aes(x = Host.Species, y = Eigenvector.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Eigenvector Centrality (rank)") +
+#  annotate("text", x = 0., y = 1, label = "B") +
+  ggtitle("")
+#p3 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p4 <- ggplot(rank_degr, aes(x = Host.Species, y = Degree.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Degree (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "D") +
+  ggtitle("")
+#p4 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+p5 <- ggplot(rank_strn, aes(x = Host.Species, y = Strength.PercRank)) +
+  geom_violin() +
+  ylim(0,1) +
+  geom_jitter(height = 0, alpha = 0.2) +
+  xlab("Host Species") +
+  ylab("Strength (rank)") +
+#  annotate("text", x = 0.5, y = 1, label = "F") +
+  ggtitle("")
+#p5 + theme_bw() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5))
+
+
+multiplot(p0 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p1 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p2 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          #p2 + theme_few(),
+          p3 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p4 + theme_few() + theme(axis.text.x = element_blank(), axis.title.x=element_blank()),
+          p5 + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5)),
+          #p5 + theme_few(),
+          cols = 2)
+
+```
+
+\pagebreak
+
+# Log-scaled Shared AUC Prev-x-Density--Centrality Ranks Area Histogram
+
+```{r, fig.height=6,fig.width=7,echo=FALSE, warning=FALSE}
+# geom_area plots of centrality rank counts for each host species
+
+ranked_alls <- ranked_central %>%
+  select(LakeYear, Host.Species, Betweenness.Rank, Closeness.Rank, Eigenvector.Rank,
+         Degree.Rank, Strength.Rank) %>%
+  gather(Centrality_Metric, Rank, Betweenness.Rank:Strength.Rank) 
+  
+
+ranked_alls$Centrality_Metric <- as.factor(ranked_alls$Centrality_Metric)
+
+p001 <- ggplot(ranked_alls, aes(x = Rank, fill = Centrality_Metric)) +
+  geom_area(stat = "bin", binwidth = 1, position = "identity", alpha = 0.2) 
+  #geom_area(aes(colour = Centrality_Metric, 
+#                fill= fct_reorder(Centrality_Metric, Rank, .desc = TRUE)), 
+#            position = 'identity') 
+p001 + facet_wrap(~Host.Species)  + theme_few() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.5), legend.position = "bottom", legend.title = element_blank())
+```

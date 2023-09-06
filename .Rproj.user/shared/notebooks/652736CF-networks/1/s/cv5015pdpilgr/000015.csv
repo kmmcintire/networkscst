@@ -1,0 +1,8 @@
+"0","dat_matrix <- frame2webs(all_inf, 
+                             varnames = c(""Host.Species"", ""Parasite.Species"", ""Lake"", ""Sum_Infections""), 
+                             type.out = ""list"", 
+                             emptylist = FALSE)
+"
+"2","Error in tapply(dframe[, varnames[4]], dframe[, varnames[1:3]], sum) : 
+  arguments must have same length
+"

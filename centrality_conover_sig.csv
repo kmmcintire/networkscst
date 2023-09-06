@@ -1,0 +1,5 @@
+"","Parasite.Species","Weight.Method","KW.p","KW.chisq","Comparison","Conover.p"
+"1","brood","infecteds_geom",0.0100565078366757,15.0726203073822,"dentifera - parvula",0.0394989978618659
+"2","brood","infecteds_geom",0.0100565078366757,15.0726203073822,"dentifera - pulicaria",0.0265445217191589
+"3","pasteuria","infecteds_geom",0.00918975655787347,13.4709677419355,"ceriodaphnia - dentifera",0.00899056983468351
+"4","pasteuria","infecteds_geom",0.00918975655787347,13.4709677419355,"ceriodaphnia - retrocurva",0.00782167229482887

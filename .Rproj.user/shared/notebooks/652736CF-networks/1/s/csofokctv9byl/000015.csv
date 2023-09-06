@@ -1,0 +1,66 @@
+"0","require(igraph)
+"
+"2","Loading required package: igraph
+"
+"2","
+Attaching package: ‘igraph’
+
+"
+"2","The following object is masked from ‘package:bipartite’:
+
+    strength
+
+"
+"2","The following objects are masked from ‘package:sna’:
+
+    betweenness, bonpow, closeness, components, degree, dyad.census, evcent, hierarchy,
+    is.connected, neighborhood, triad.census
+
+"
+"2","The following objects are masked from ‘package:network’:
+
+    %c%, %s%, add.edges, add.vertices, delete.edges, delete.vertices, get.edge.attribute,
+    get.edges, get.vertex.attribute, is.bipartite, is.directed, list.edge.attributes,
+    list.vertex.attributes, set.edge.attribute, set.vertex.attribute
+
+"
+"2","The following object is masked from ‘package:vegan’:
+
+    diversity
+
+"
+"2","The following object is masked from ‘package:permute’:
+
+    permute
+
+"
+"2","The following objects are masked from ‘package:dplyr’:
+
+    as_data_frame, groups, union
+
+"
+"2","The following objects are masked from ‘package:purrr’:
+
+    compose, simplify
+
+"
+"2","The following object is masked from ‘package:tidyr’:
+
+    crossing
+
+"
+"2","The following object is masked from ‘package:tibble’:
+
+    as_data_frame
+
+"
+"2","The following objects are masked from ‘package:stats’:
+
+    decompose, spectrum
+
+"
+"2","The following object is masked from ‘package:base’:
+
+    union
+
+"

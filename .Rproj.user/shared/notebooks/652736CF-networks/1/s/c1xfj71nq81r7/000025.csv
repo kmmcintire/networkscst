@@ -1,0 +1,5 @@
+"0","mat.text <- round(mat, digits = 2)
+"
+"2","Error in round(mat, digits = 2) : 
+  non-numeric argument to mathematical function
+"
